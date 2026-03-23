@@ -1,0 +1,5 @@
+{
+  "name": "Red Team Swarm Dashboard",
+  "description": "A multi-agent autonomous security orchestration system for red teaming operations.",
+  "requestFramePermissions": []
+}
