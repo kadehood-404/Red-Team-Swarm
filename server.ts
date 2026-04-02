@@ -37,6 +37,10 @@ interface AgentState {
   toolConfig: {
     nmapIntensity: number;
     ffufWordlist: string;
+    stealthMode?: boolean;
+    delayRange?: [number, number];
+    rotateUserAgents?: boolean;
+    proxies?: string[];
   };
   pendingAction?: {
     agent: string;
@@ -55,6 +59,7 @@ async function startServer() {
   const mockTools = {
     nmap: (target: string, intensity: number) => {
       const ports = intensity > 5 ? "80, 443, 445, 8080, 3306" : "80, 443, 445";
+      const wafHeader = Math.random() > 0.5 ? "X-WAF-Signature: Cloudflare-Ray-ID\nServer: cloudflare" : "Server: Apache/2.4.41 (Ubuntu)";
       return `Starting Nmap 7.92 at 2026-03-23 16:05
 Nmap scan report for ${target} (Intensity: ${intensity})
 Host is up (0.0021s latency).
@@ -64,19 +69,28 @@ PORT    STATE SERVICE
 445/tcp open  microsoft-ds
 ${intensity > 5 ? "8080/tcp open  http-proxy\n3306/tcp open  mysql" : ""}
 
+[HTTP-HEADERS]
+${wafHeader}
+
 Nmap done: 1 IP address (1 host up) scanned in ${intensity * 0.1} seconds`;
     },
-    ffuf: (target: string, wordlist: string) => {
-      const isStealth = wordlist.includes("stealth");
-      if (!isStealth && Math.random() > 0.5) {
+    ffuf: (target: string, wordlist: string, stealth: boolean = false) => {
+      if (!stealth && Math.random() > 0.7) {
         return `[ERROR] 403 Forbidden - WAF Blocked Request
 [INFO] Too many requests detected by Cloudflare.
+[INFO] X-WAF-Event: BLOCK_ID_9928
 [INFO] Scan aborted.`;
       }
+      
+      const stealthInfo = stealth ? 
+        `[INFO] Stealth Mode Active: Delay 200-500ms | User-Agent Rotation: ON | Proxy: 45.12.33.102` : 
+        `[INFO] Aggressive Mode: No Delay | User-Agent: ffuf/1.5.0`;
+
       return `[INFO] Starting ffuf v1.5.0
 [INFO] Target: ${target}
 [INFO] Wordlist: ${wordlist}
 [INFO] Method: GET
+${stealthInfo}
 
 /admin                  [Status: 200, Size: 1245]
 /login                  [Status: 200, Size: 3452]
@@ -162,12 +176,27 @@ Target: ${target}
       // Inquisitor Logic: Check for WAF or interesting ports
       if (output.includes("80/tcp  open")) {
         updatedState.logs.push("[Analyst] Web service detected. Probing for WAF presence.");
-        const wafDetected = Math.random() > 0.4;
-        if (wafDetected) {
+        
+        // Advanced WAF Detection Logic
+        const hasWafHeaders = output.includes("X-WAF-Signature") || output.includes("cloudflare");
+        const suspectWaf = hasWafHeaders || Math.random() > 0.6;
+
+        if (suspectWaf) {
           updatedState.wafDetected = true;
-          updatedState.logs.push("[Analyst] WAF DETECTED: Cloudflare/ModSecurity signature identified.");
-          updatedState.logs.push("[Scout] Architect adjusting strategy: Switching to 'stealth_wordlist.txt' and reducing request rate.");
-          updatedState.toolConfig.ffufWordlist = "stealth_wordlist.txt";
+          updatedState.logs.push("[Analyst] WAF DETECTED: Cloudflare/ModSecurity signature identified via HTTP headers.");
+          updatedState.logs.push("[Scout] Architect instructing Breacher to switch to 'Stealth' scanning profile.");
+          
+          // Configure Stealth Profile
+          updatedState.toolConfig = {
+            ...updatedState.toolConfig,
+            stealthMode: true,
+            delayRange: [200, 500],
+            rotateUserAgents: true,
+            proxies: ["45.12.33.102", "103.44.12.5", "192.168.44.11"],
+            ffufWordlist: "stealth_wordlist.txt"
+          };
+          
+          updatedState.logs.push("[Scout] Stealth Profile Configured: Randomized Delays (200-500ms), UA Rotation, and Proxy Obfuscation active.");
         }
         updatedState.nextStep = "RUN_NUCLEI";
       } else if (output.includes("445/tcp open")) {
@@ -195,14 +224,18 @@ Target: ${target}
       }
       updatedState.nextStep = "RUN_FFUF";
     } else if (state.nextStep === "RUN_FFUF") {
-      updatedState.logs.push(`[Breacher] Running FFUF with wordlist: ${state.toolConfig.ffufWordlist}...`);
-      const output = mockTools.ffuf(state.target, state.toolConfig.ffufWordlist);
+      const isStealth = updatedState.toolConfig.stealthMode || false;
+      updatedState.logs.push(`[Breacher] Running FFUF with wordlist: ${state.toolConfig.ffufWordlist}${isStealth ? " (STEALTH MODE)" : ""}...`);
+      
+      const output = mockTools.ffuf(state.target, state.toolConfig.ffufWordlist, isStealth);
       updatedState.scanResults.push({ tool: "ffuf", output, timestamp: new Date().toISOString() });
       
       if (output.includes("WAF Blocked")) {
         updatedState.logs.push("[Analyst] SCAN FAILED: WAF blocked our aggressive probe.");
         updatedState.logs.push("[Scout] Architect retrying with ultra-stealth parameters.");
         updatedState.toolConfig.ffufWordlist = "ultra_stealth_v2.txt";
+        updatedState.toolConfig.stealthMode = true;
+        updatedState.toolConfig.delayRange = [500, 1000];
       } else {
         if (output.includes("/.env")) {
           updatedState.logs.push("[Analyst] CRITICAL VULNERABILITY: Exposed .env file detected.");

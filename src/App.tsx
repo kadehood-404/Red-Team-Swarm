@@ -55,6 +55,10 @@ interface AgentState {
   toolConfig?: {
     nmapIntensity: number;
     ffufWordlist: string;
+    stealthMode?: boolean;
+    delayRange?: [number, number];
+    rotateUserAgents?: boolean;
+    proxies?: string[];
   };
 }
 
